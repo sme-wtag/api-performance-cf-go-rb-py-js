@@ -58,23 +58,18 @@ class ApiServer
   end
 
   def init_db
-    @db = Mysql2::Client.new(
+    @db_params = {
       host: '127.0.0.1',
       username: 'root',
       password: 'admin',
       database: 'test_database',
-      reconnect: true,
       symbolize_keys: true
-    )
-    puts 'Connected to MySQL database!'
-  rescue Mysql2::Error => e
-    puts "Error connecting to database: #{e.message}"
-    exit 1
+    }
   end
-
+  
   def get_user_with_projects(user_id)
-    return nil if user_id.nil? || user_id.to_i <= 0
-
+    db = Mysql2::Client.new(@db_params.merge(reconnect: true))
+    
     query = <<-SQL
       SELECT 
         u.id, u.username, u.email, u.created_at, u.updated_at,
@@ -90,41 +85,43 @@ class ApiServer
       LEFT JOIN projects p ON up.project_id = p.id
       WHERE u.id = ?
     SQL
-
-    begin
-      stmt = @db.prepare(query)
-      results = stmt.execute(user_id)
-      user_data = nil
-      projects = []
-
-      results.each do |row|
-        user_data ||= UserWithProjects.new(
-          id: row[:id],
-          username: row[:username],
-          email: row[:email],
-          created_at: row[:created_at],
-          updated_at: row[:updated_at]
-        )
-        
-        next if row[:project_id].zero?
-        projects << Project.new(
-          id: row[:project_id],
-          project_name: row[:project_name],
-          description: row[:description],
-          created_at: row[:project_created_at],
-          updated_at: row[:project_updated_at],
-          role: row[:role],
-          assigned_at: row[:assigned_at]
-        )
-      end
+  
+    stmt = db.prepare(query)
+    results = stmt.execute(user_id)
+    
+    user_data = nil
+    projects = []
+  
+    results.each do |row|
+      user_data ||= UserWithProjects.new(
+        id: row[:id],
+        username: row[:username],
+        email: row[:email],
+        created_at: row[:created_at],
+        updated_at: row[:updated_at]
+      )
       
-      stmt.close
-      [user_data, projects]
-    rescue Mysql2::Error => e
-      puts "Database error: #{e.message}"
-      nil
+      next if row[:project_id].zero?
+  
+      projects << Project.new(
+        id: row[:project_id],
+        project_name: row[:project_name],
+        description: row[:description],
+        created_at: row[:project_created_at],
+        updated_at: row[:project_updated_at],
+        role: row[:role],
+        assigned_at: row[:assigned_at]
+      )
     end
+  
+    stmt.close
+    db.close
+    [user_data, projects]
+  rescue Mysql2::Error => e
+    puts "Database error: #{e.message}"
+    nil
   end
+  
 
   def setup_server
     @server = WEBrick::HTTPServer.new(Port: 8080, BindAddress: '0.0.0.0')
